@@ -4,7 +4,7 @@ Seed chains — stateless, reproducible randomness.
 
 A *chain* is a sequence of seeds where each is a fixed pseudo-random
 permutation of the previous one (``next_seed``). A chain's starting point is
-derived from the training seed and the chain's identity (``derive_seed``), so
+created deterministically from the training seed and the chain's identity (``create_seed``), so
 every source of randomness is a pure function of (training seed, identity,
 number of events) — nothing to replay, almost nothing to checkpoint.
 
@@ -39,9 +39,9 @@ def _stable_int64(part) -> int:
     raise TypeError(f"cannot use {type(part)} as a seed component")
 
 
-def derive_seed(*components) -> int:
-    """A chain's starting seed, derived from its identity — e.g.
-    derive_seed(training_seed, COMPOSITION_SAMPLING, rank, lang)."""
+def create_seed(*components) -> int:
+    """A chain's starting seed, computed deterministically from its identity —
+    e.g. create_seed(training_seed, SUBTOKENIZER_SAMPLING, rank, lang)."""
     seed = 0
     for c in components:
         seed = next_seed(seed ^ _stable_int64(c))

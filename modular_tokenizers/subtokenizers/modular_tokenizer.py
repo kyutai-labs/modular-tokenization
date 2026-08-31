@@ -1,18 +1,18 @@
-"""The modular tokenizer: one global vocabulary, served per language composition.
+"""The modular tokenizer: one global vocabulary, served per subtokenizer.
 
 Paper picture (§3): a *global* tokenizer T holds the full multilingual
-vocabulary; a *subtokenizer* T_s restricts it to the languages of a
-*composition* — a sorted comma-joined id like ``"fr"``, ``"en,fr"``, or
-``"all"`` (= T itself).
+vocabulary; a *subtokenizer* T_s restricts it to a subset of languages and is
+identified by them — ``"fr"`` (monolingual), ``"en,fr"`` (unified), ``"all"``
+(= T itself).
 
 Division of labor in this package:
 
     tokenizer.py    the plain SP/HF wrapper (what a "tokenizer" is)
     masks.py        which global token ids belong to each language
     extraction.py   turning a mask into an actual subtokenizer
-    composition.py  which compositions training batches sample
+    sampling.py     which subtokenizer each training batch samples
     THIS FILE       gluing it together: load T, cache subtokenizers,
-                    encode/decode per composition
+                    encode/decode per subtokenizer
 
 Three tokenizer kinds are supported, detected from the loaded file itself:
 ``tokenizer.model`` -> SentencePiece Unigram; ``tokenizer.json`` -> HF, with
@@ -34,7 +34,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 from sentencepiece import SentencePieceProcessor
 
-from modular_tokenizers.subtokenizers.composition import SamplingConfig
+from modular_tokenizers.subtokenizers.sampling import SamplingConfig
 from modular_tokenizers.subtokenizers.extraction import (
     bpe_pieces_by_lang,
     build_id_maps,
@@ -142,11 +142,11 @@ def _load_and_merge_monolingual(paths, langs, extraction) -> GlobalTokenizer:
 # ---------------------------------------------------------------------------
 
 class ModularTokenizer:
-    """Serve subtokenizers of a global tokenizer, per language composition.
+    """Serve the subtokenizers of a global tokenizer.
 
     ``encode``/``decode`` work like ``Tokenizer``'s, with one extra argument:
-    the composition whose vocabulary to use. Subtokenizers are materialized
-    on first use and cached.
+    the id of the subtokenizer (= its languages) whose vocabulary to use.
+    Subtokenizers are materialized on first use and cached.
     """
 
     def __init__(
@@ -190,54 +190,54 @@ class ModularTokenizer:
             if self.algorithm == "bpe" else None
         )
 
-        # Which compositions each language's batches may sample at training
+        # Which subtokenizers each language's batches may sample at training
         # time (Full / Data(n)), with their probabilities.
-        self.compositions_by_lang, self.composition_probs = \
-            self.sampling_strategy.build_compositions_by_lang(self.langs)
+        self.subtokenizer_ids_by_lang, self.subtokenizer_probs = \
+            self.sampling_strategy.build_subtokenizer_ids_by_lang(self.langs)
 
         self._prebuild_subtokenizers()
 
     def _prebuild_subtokenizers(self):
         """Warm the cache with every subtokenizer training uses: each language,
-        'all', and the sampled compositions (as subtokenizers_by_lang)."""
+        'all', and the sampled unified ids (as subtokenizers_by_lang)."""
         self.subtokenizers = {}
         self._sub_to_global_ids = {}
         self._global_to_sub_ids = {}
 
-        for composition_id in self.langs + ['all']:
-            self.build_subtokenizer(composition_id)
+        for subtokenizer_id in self.langs + ['all']:
+            self.build_subtokenizer(subtokenizer_id)
 
         self.subtokenizers_by_lang = {
-            lang: {comp: self.build_subtokenizer(comp) for comp in comps}
-            for lang, comps in self.compositions_by_lang.items()
+            lang: {i: self.build_subtokenizer(i) for i in ids}
+            for lang, ids in self.subtokenizer_ids_by_lang.items()
         }
 
-    def encode(self, text, composition_id, bos=True, eos=True, return_mask=False):
-        """Tokenize with the composition's subtokenizer (built on demand).
+    def encode(self, text, subtokenizer_id, bos=True, eos=True, return_mask=False):
+        """Tokenize with the given subtokenizer (built on demand).
         Returned ids are in the global id space."""
-        subtokenizer = self.build_subtokenizer(composition_id)
+        subtokenizer = self.build_subtokenizer(subtokenizer_id)
         tokens = subtokenizer.encode(text, bos=bos, eos=eos)
-        tokens = self._sub_to_global_ids[composition_id][np.asarray(tokens, dtype=np.int32)]
+        tokens = self._sub_to_global_ids[subtokenizer_id][np.asarray(tokens, dtype=np.int32)]
 
         if return_mask:
-            return tokens, self.masks[composition_id]
+            return tokens, self.masks[subtokenizer_id]
         return tokens
 
-    def decode(self, tokens, composition_id, strip_bos=False, strip_eos=False):
-        subtokenizer = self.build_subtokenizer(composition_id)
-        tokens = self._global_to_sub_ids[composition_id][np.asarray(tokens, dtype=np.int32)]
+    def decode(self, tokens, subtokenizer_id, strip_bos=False, strip_eos=False):
+        subtokenizer = self.build_subtokenizer(subtokenizer_id)
+        tokens = self._global_to_sub_ids[subtokenizer_id][np.asarray(tokens, dtype=np.int32)]
 
         return subtokenizer.decode(tokens, strip_bos=strip_bos, strip_eos=strip_eos)
 
-    def build_subtokenizer(self, composition_id: str) -> Tokenizer:
-        """Return the composition's subtokenizer, materializing and caching it
-        (and its sub<->global id maps) on first use."""
-        if composition_id in self.subtokenizers:
-            return self.subtokenizers[composition_id]
+    def build_subtokenizer(self, subtokenizer_id: str) -> Tokenizer:
+        """Return the subtokenizer for an id like 'en,fr', materializing and
+        caching it (and its sub<->global id maps) on first use."""
+        if subtokenizer_id in self.subtokenizers:
+            return self.subtokenizers[subtokenizer_id]
 
-        self.mask(composition_id)  # ensure the composition's mask is cached
+        self.mask(subtokenizer_id)  # ensure the subtokenizer's mask is cached
 
-        if composition_id == 'all':
+        if subtokenizer_id == 'all':
             subtokenizer = self.tokenizer  # 'all' IS the global tokenizer
             identity = np.arange(self.tokenizer.vocab_size())
             id_maps = (identity, identity)
@@ -245,32 +245,32 @@ class ModularTokenizer:
             subtokenizer = materialize_subtokenizer(
                 self.tokenizer,
                 self.algorithm,
-                self.masks[composition_id],
-                composition_id=composition_id,
+                self.masks[subtokenizer_id],
+                subtokenizer_id=subtokenizer_id,
                 bpe_pieces_by_lang=self._bpe_pieces_by_lang,
                 tokens_to_merges=self._token_to_merge_rule,
             )
             id_maps = build_id_maps(subtokenizer, self.tokenizer)
 
-        self.subtokenizers[composition_id] = subtokenizer
-        self._sub_to_global_ids[composition_id], self._global_to_sub_ids[composition_id] = id_maps
+        self.subtokenizers[subtokenizer_id] = subtokenizer
+        self._sub_to_global_ids[subtokenizer_id], self._global_to_sub_ids[subtokenizer_id] = id_maps
         return subtokenizer
 
-    def mask(self, composition_id: str) -> np.ndarray:
-        """Boolean mask over the global id space: which tokens the composition
+    def mask(self, subtokenizer_id: str) -> np.ndarray:
+        """Boolean mask over the global id space: which tokens the subtokenizer
         may use — the union of its languages' masks (+ special tokens)."""
-        if composition_id not in self.masks:
-            if composition_id == 'all':
+        if subtokenizer_id not in self.masks:
+            if subtokenizer_id == 'all':
                 mask = np.zeros(self.vocab_size(), dtype=bool)
                 mask[:self.tokenizer.vocab_size()] = True
             else:
-                lang_masks = [self.masks[l] for l in composition_id.split(',') if l in self.masks]
+                lang_masks = [self.masks[l] for l in subtokenizer_id.split(',') if l in self.masks]
                 if lang_masks:
                     mask = np.logical_or.reduce(lang_masks) | self.special_tokens_mask
                 else:
                     mask = self.special_tokens_mask.copy()
-            self.masks[composition_id] = mask
-        return self.masks[composition_id]
+            self.masks[subtokenizer_id] = mask
+        return self.masks[subtokenizer_id]
 
     # Ids and sizes: same interface as Tokenizer, delegated to the global T.
 

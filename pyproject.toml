@@ -3,7 +3,7 @@ name = "modular-tokenization"
 version = "0.1.0"
 description = "To Each Language Its Tokenizer: modular tokenizers (sequential BPE, merged Unigram) with extractable, composable per-language subtokenizers, and multilingual LM training on sampled sub-vocabularies"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "numpy",
@@ -14,6 +14,16 @@ dependencies = [
     "pydantic>=2",
     "omegaconf",
     "tqdm",
+]
+
+[project.optional-dependencies]
+lm = [
+    "jax",
+    "flax",
+    "jaxtyping",
+    "optax",
+    "orbax-checkpoint",
+    "flash-attn3-jax",
 ]
 
 [build-system]

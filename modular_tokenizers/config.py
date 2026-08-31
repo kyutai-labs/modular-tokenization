@@ -77,8 +77,16 @@ def parse_args_with_default(
     *,
     default_cfg: DictConfig | None = None,
     cli_args: DictConfig | None = None,
+    replace_paths: tuple[str, ...] = (),
 ):
-    """Merge default config, config files and CLI overrides (later wins)."""
+    """Merge default config, config files and CLI overrides (later wins).
+
+    OmegaConf merges dict values by UNION, which is wrong for dict-valued
+    settings that each config layer states in full (e.g. ``data.sources``:
+    a config that lists 3 languages must not inherit a 4th from an earlier
+    layer). ``replace_paths`` lists such dotted keys: the last config layer
+    that sets one wins entirely.
+    """
     if cli_args is None:
         cli_args = OmegaConf.from_cli()
         assert isinstance(
@@ -88,6 +96,12 @@ def parse_args_with_default(
     if default_cfg is not None:
         ordered_cfgs.insert(0, default_cfg)
     cfg = OmegaConf.merge(*ordered_cfgs)
+    for path in replace_paths:
+        for layer in reversed(ordered_cfgs):
+            value = OmegaConf.select(layer, path)
+            if value is not None:
+                OmegaConf.update(cfg, path, value, merge=False)
+                break
     return OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
 
 
@@ -106,11 +120,14 @@ def parse_args_to_pydantic_model(
     args_cls: Type[T],
     cli_args: DictConfig | None = None,
     instantiate_default_cls: bool = True,
+    replace_paths: tuple[str, ...] = (),
 ) -> T:
     if instantiate_default_cls:
         default_cfg = OmegaConf.create(args_cls().model_dump())
     else:
         default_cfg = OmegaConf.create(get_pydantic_default_args(args_cls))
-    parsed_cfg = parse_args_with_default(default_cfg=default_cfg, cli_args=cli_args)
+    parsed_cfg = parse_args_with_default(
+        default_cfg=default_cfg, cli_args=cli_args, replace_paths=replace_paths
+    )
     pydantic_args = args_cls.model_validate(parsed_cfg)
     return pydantic_args

@@ -30,18 +30,18 @@ def materialize_subtokenizer(
     algorithm: str,
     mask: np.ndarray,
     *,
-    composition_id: str | None = None,
+    subtokenizer_id: str | None = None,
     bpe_pieces_by_lang: dict | None = None,
     tokens_to_merges: dict | None = None,
 ) -> Tokenizer:
-    """Build the subtokenizer for one composition of a global tokenizer.
+    """Build one subtokenizer of a global tokenizer.
 
     The kept tokens get contiguous new ids; ``build_id_maps`` provides the
     translation to/from global ids.
     """
     if algorithm == "bpe":
         raw = extract_hf_bpe_subtokenizer(
-            global_tokenizer.tokenizer, composition_id, bpe_pieces_by_lang, tokens_to_merges
+            global_tokenizer.tokenizer, subtokenizer_id, bpe_pieces_by_lang, tokens_to_merges
         )
         return Tokenizer(hf_tokenizer=raw)
 
@@ -136,12 +136,12 @@ def replace_vocab_and_merges(tokenizer, vocab, merges):
     return new_raw
 
 
-def extract_hf_bpe_subtokenizer(tokenizer, composition, pieces_and_index_by_lang, tokens_to_merges):
-    """Build the subtokenizer of a language composition from a global BPE
+def extract_hf_bpe_subtokenizer(tokenizer, subtokenizer_id, pieces_and_index_by_lang, tokens_to_merges):
+    """Build a subtokenizer from a global BPE
     tokenizer: union of the languages' vocabularies, re-indexed contiguously,
     with each token's merge rule kept in global order."""
     vocab = {}
-    for l in composition.split(','):
+    for l in subtokenizer_id.split(','):
         for token, idx in pieces_and_index_by_lang[l].items():
             if token not in vocab:
                 vocab[token] = idx
@@ -159,7 +159,7 @@ def extract_hf_bpe_subtokenizer(tokenizer, composition, pieces_and_index_by_lang
 
 def bpe_pieces_by_lang(global_tokenizer: Tokenizer, language_masks: dict, langs: list[str]) -> dict:
     """{lang: {piece: global id}} for each language — the lookup
-    ``extract_hf_bpe_subtokenizer`` needs to union composition vocabularies."""
+    ``extract_hf_bpe_subtokenizer`` needs to union language vocabularies."""
     return {
         lang: {
             global_tokenizer.id_to_pieces_mapping[i]: i

@@ -61,7 +61,7 @@ def main():
             tokens = tokenizer.encode(text)
         else:
             # Counts are over the GLOBAL vocabulary: tokenize with the full
-            # composition.
+            # tokenizer ('all').
             tokens = tokenizer.encode(text, 'all', bos=False, eos=False)
 
         for j in tokens:

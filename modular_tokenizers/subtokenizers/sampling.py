@@ -1,10 +1,10 @@
-"""Composition sampling: which subtokenizer tokenizes each training batch.
+"""Subtokenizer sampling: which subtokenizer tokenizes each training batch.
 
-A *composition* is a subset of languages identified by a sorted comma-joined
-id (e.g. ``"en,fr"``; ``"all"`` is the full tokenizer). During pretraining,
-each batch in language L is tokenized either with L's own subtokenizer or
-with a sampled composition containing L (paper: the Full and Data(n)
-strategies).
+A subtokenizer is identified by the sorted comma-joined languages it covers
+(e.g. ``"fr"`` the monolingual one, ``"en,fr"`` a unified one, ``"all"`` the
+full tokenizer). During pretraining, each batch in language L is tokenized
+either with L's own subtokenizer or with a sampled unified subtokenizer
+containing L (paper: the Full and Data(n) strategies).
 """
 from enum import Enum
 from typing import Dict, List, Tuple
@@ -92,11 +92,11 @@ class SamplingConfig(BaseModel):
 
         probs /= probs.sum()
 
-        # Draw up to n_sampled_subtokenizers compositions and keep the UNIQUE ones
+        # Draw up to n_sampled_subtokenizers unified subtokenizers and keep the UNIQUE ones
         # (order-preserving). Sampling is with replacement, so without dedup the
-        # repeats inflate n_extra in build_compositions_by_lang while probs (a
-        # dict) collapses them -> mixed-composition weights would not sum to
-        # (1 - p_lang). Dedup keeps compositions / n_extra / probs consistent.
+        # repeats inflate n_extra in build_subtokenizer_ids_by_lang while probs (a
+        # dict) collapses them -> unified-subtokenizer weights would not sum to
+        # (1 - p_lang). Dedup keeps ids / n_extra / probs consistent.
         seen, groups = set(), []
         for _ in range(self.n_sampled_subtokenizers):
             sampled = np.random.choice(candidates, size=n_to_sample, replace=False, p=probs)
@@ -106,26 +106,26 @@ class SamplingConfig(BaseModel):
                 groups.append(group_name)
         return groups
 
-    def build_compositions_by_lang(self, langs: List[str]) -> Tuple[Dict, Dict | None]:
-        """For each language: the composition ids its batches may use, and their
-        sampling probabilities -> ({lang: [composition_id]}, {lang: {composition_id: p}})."""
-        compositions = {}
+    def build_subtokenizer_ids_by_lang(self, langs: List[str]) -> Tuple[Dict, Dict | None]:
+        """For each language: the subtokenizer ids its batches may use, and their
+        sampling probabilities -> ({lang: [subtokenizer_id]}, {lang: {subtokenizer_id: p}})."""
+        subtokenizer_ids = {}
         probs = {}
 
         for src in langs:
             if self.strategy is None:
                 # No sampling: every language uses the full (merged) vocab.
-                comps = ['all']
+                ids = ['all']
             elif self.strategy == SamplingMethod.FULL:
-                comps = [src, 'all']
+                ids = [src, 'all']
             else:
-                comps = [src] + self._get_weighted_samples(src, langs)
+                ids = [src] + self._get_weighted_samples(src, langs)
 
-            compositions[src] = comps
+            subtokenizer_ids[src] = ids
 
             if self.p_lang is not None:
-                n_extra = len(comps) - 1
+                n_extra = len(ids) - 1
                 p_extra = (1.0 - self.p_lang) / n_extra if n_extra > 0 else 0.0
-                probs[src] = {c: (self.p_lang if c == src else p_extra) for c in comps}
+                probs[src] = {i: (self.p_lang if i == src else p_extra) for i in ids}
 
-        return compositions, probs
+        return subtokenizer_ids, probs

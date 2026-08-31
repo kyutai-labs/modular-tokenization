@@ -18,13 +18,13 @@ CLI (dotted keys per language, or put them in a YAML passed as config=...):
         tokenizer.extraction_strategy.strategy=merged_seq_bpe \
         reference.type=base \
         reference_paths.bg=/refs/bg_bpe24k.json reference_paths.el=/refs/el_bpe24k.json \
-        [composition=all] [save_path=nsl.json]
+        [subtokenizer_id=all] [save_path=nsl.json]
 
 (The tokenizer's algorithm/backend are detected from the file; a tokenizer
 directory provides its lang_to_ids.json automatically.)
 
 By default a modular tokenizer is evaluated with each language's own
-subtokenizer; pass ``composition=all`` (or any composition id) to override.
+subtokenizer; pass ``subtokenizer_id=all`` (or any subtokenizer id) to override.
 """
 import json
 import logging
@@ -48,16 +48,16 @@ class NSLArgs(BaseModel):
     tokenizer: TokenizerArgs = TokenizerArgs()
     reference: TokenizerArgs = TokenizerArgs()   # shared reference settings (type, ...)
     reference_paths: dict[str, str] = {}  # {lang: reference tokenizer file}
-    composition: str | None = None        # default: the language itself
+    subtokenizer_id: str | None = None    # default: the language itself
     max_load: int = -1
     save_path: str | None = None
 
 
-def _n_tokens(tokenizer, tok_type: str, texts: list[str], composition: str) -> int:
+def _n_tokens(tokenizer, tok_type: str, texts: list[str], subtokenizer_id: str) -> int:
     total = 0
     for text in texts:
         if _is_modular(tok_type):
-            total += len(tokenizer.encode(text, composition, bos=False, eos=False))
+            total += len(tokenizer.encode(text, subtokenizer_id, bos=False, eos=False))
         else:
             total += len(tokenizer.encode(text, bos=False, eos=False))
     return total
@@ -78,9 +78,9 @@ def compute_nsl(args: NSLArgs) -> dict:
         reference_args = args.reference.model_copy(update={"path": args.reference_paths[lang]})
         reference = reference_args.build_tokenizer()
 
-        composition = args.composition or lang
-        n = _n_tokens(tokenizer, args.tokenizer.type, texts, composition)
-        n_ref = _n_tokens(reference, args.reference.type, texts, composition)
+        subtokenizer_id = args.subtokenizer_id or lang
+        n = _n_tokens(tokenizer, args.tokenizer.type, texts, subtokenizer_id)
+        n_ref = _n_tokens(reference, args.reference.type, texts, subtokenizer_id)
 
         results[lang] = {"nsl": n / n_ref, "tokens": n, "tokens_ref": n_ref, "texts": len(texts)}
         logger.info(f"{lang}: NSL={results[lang]['nsl']:.3f} ({n} / {n_ref} tokens, {len(texts)} texts)")
