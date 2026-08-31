@@ -1,0 +1,19 @@
+# NSL evaluation config (paper Eq. 1). Languages = the keys of `data`.
+# Each data path: plain .txt, .zst, JSONL (set text_field), or a directory.
+data:
+  bg: /path/to/eval/bg.txt
+  el: /path/to/eval/el.txt
+  en: /path/to/eval/en.txt
+tokenizer:
+  type: modular
+  path: outputs/tokenizers/sequential_bpe_24000   # a tokenizer directory
+  langs: bg,el,en
+  extraction_strategy:
+    strategy: merged_seq_bpe    # merged_norm for the merged-Unigram directory
+reference:
+  type: base
+reference_paths:
+  bg: outputs/tokenizers/monolingual_bpe/bg.json
+  el: outputs/tokenizers/monolingual_bpe/el.json
+  en: outputs/tokenizers/monolingual_bpe/en.json
+save_path: outputs/tokenizers/nsl.json

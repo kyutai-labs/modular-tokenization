@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+build/
+dist/
+
+# experiment artifacts
+outputs/
+*.ipynb
+.ipynb_checkpoints/
+slurm_logs/
