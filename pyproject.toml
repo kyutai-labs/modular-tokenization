@@ -16,15 +16,22 @@ dependencies = [
     "tqdm",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
+# language-model training/evaluation stack, installed by default (uv sync);
+# tokenizer-only users can skip it with: uv sync --no-group lm
 lm = [
-    "jax",
+    "jax[cuda12]",
     "flax",
     "jaxtyping",
     "optax",
     "orbax-checkpoint",
     "flash-attn3-jax",
+    "sacrebleu",
+    "rouge-score",
 ]
+
+[tool.uv]
+default-groups = ["lm"]
 
 [build-system]
 requires = ["hatchling"]

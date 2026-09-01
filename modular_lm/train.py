@@ -29,6 +29,7 @@ from modular_lm.nn.transformer import TransformerArgs, create_model
 from modular_lm.training.checkpoint import (
     checkpoint_steps,
     create_checkpoint_manager,
+    discard_steps_after,
     restore_checkpoint,
     save_checkpoint,
 )
@@ -48,9 +49,10 @@ os.environ["XLA_FLAGS"] = (
 class TrainArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # checkpoints, args.json and metrics.jsonl land here; None disables saving.
-    # If the directory already holds a checkpoint, training resumes from it.
+    # checkpoints, args.json and metrics.jsonl land here; None disables saving
     run_dir: str | None = None
+    resume: bool = False    # continue the run_dir's training (data stream bit-exact)
+    resume_step: int = -1   # checkpoint step to resume from; -1 = the latest
     save_freq: int = 5000
     max_ckpt_to_keep: int | None = 1
     keep_period: int | None = 20000   # additionally keep every keep_period-th step
@@ -135,13 +137,26 @@ def main():
         )
 
     data_state = None
-    if args.run_dir and checkpoint_steps(args.run_dir):
+    if args.resume:
+        assert args.run_dir, "resume=true requires run_dir"
+        assert checkpoint_steps(args.run_dir), \
+            f"resume=true but no checkpoint found in {args.run_dir}"
         params, opt_state, saved_step, data_state = restore_checkpoint(
-            args.run_dir, params_shape, optim_shape, shape_to_sharding, rank=rank
+            args.run_dir, params_shape, optim_shape, shape_to_sharding,
+            rank=rank, step=args.resume_step,
         )
         start = saved_step + 1
         logger.log(f"Resumed from {args.run_dir} at step {saved_step}")
+        if manager:
+            discarded = discard_steps_after(manager, args.run_dir, saved_step, rank)
+            if discarded:
+                logger.log(f"WARNING: discarded the run's later history "
+                           f"(checkpoints at steps {discarded})")
     else:
+        assert not (args.run_dir and checkpoint_steps(args.run_dir)), (
+            f"{args.run_dir} already contains checkpoints: pass resume=true to "
+            "continue it, or use a fresh run_dir"
+        )
         start = 0
         params, opt_state = jax.jit(
             init_params_and_optim, out_shardings=(params_sharding, optim_sharding)

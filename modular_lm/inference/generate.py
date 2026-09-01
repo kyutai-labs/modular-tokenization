@@ -108,13 +108,24 @@ class Generator:
         )
         return cache["tokens"]
 
-    def generate(self, prompts: list[str], subtokenizer_id: str | None = None,
-                 subtokenizer_id_out: str | None = None, length: int = 16,
-                 key: Array | None = None, only_return_generated: bool = False) -> list[str]:
+    def generate(self,
+                prompts: list[str] | None = None,
+                subtokenizer_id: str | None = None,
+                subtokenizer_id_out: str | None = None,
+                length: int = 16,
+                key: Array | None = None,
+                only_return_generated: bool = False,
+                token_prompts: list[list[int]] | None = None) -> list[str]:
+        """``token_prompts`` bypasses prompt encoding for prompts built directly
+        in token space (e.g. few-shot examples mixing two subtokenizers)."""
         key = jax.random.PRNGKey(1234) if key is None else key
         subtokenizer_id_out = subtokenizer_id_out or subtokenizer_id
 
-        tokens = [self._encode(p, subtokenizer_id) for p in prompts]
+        assert (prompts is None) != (token_prompts is None), \
+            "provide either prompts or token_prompts"
+        tokens = token_prompts if prompts is None else \
+            [self._encode(p, subtokenizer_id) for p in prompts]
+        n_prompts = len(tokens)
         total_length = max(len(t) for t in tokens) + length
         total_length = math.ceil(total_length / 64) * 64
         if self.max_model_length is not None:
@@ -131,7 +142,7 @@ class Generator:
         # different subtokenizers when subtokenizer_id_out != subtokenizer_id
         pad_id = self.tokenizer.pad_id()
         outputs = []
-        for i in range(len(prompts)):
+        for i in range(n_prompts):
             ids = generations[i, :].tolist()
             generated = [t for t in ids[-(length - 1):] if t != pad_id]
             text = self._decode(generated, subtokenizer_id_out)
@@ -148,7 +159,7 @@ class GenerateArgs(BaseModel):
     step: int = -1
     prompts: str | None = None            # text file, one prompt per line; None = interactive
     subtokenizer_id: str | None = None    # e.g. "en" or "en,fr"; required for modular tokenizers
-    subtokenizer_id_out: str | None = None
+    subtokenizer_id_out: str | None = None  # restrict generation to this subtokenizer's vocabulary (default: subtokenizer_id)
     length: int = 64
     topn: int = 25
     temp: float = 0.8

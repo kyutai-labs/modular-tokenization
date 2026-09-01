@@ -26,6 +26,7 @@ import sys
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import orbax.checkpoint as orbax
 
 from modular_lm.nn.transformer import Transformer, TransformerArgs, build_flash_attention
@@ -139,6 +140,20 @@ def restore_checkpoint(run_dir: str, params_shape, optim_shape, shape_to_shardin
     return restored["params"], restored["opt_state"], step, data_state
 
 
+def discard_steps_after(manager, run_dir: str, step: int, rank: int):
+    """Delete the checkpoints beyond ``step`` — resuming from an earlier step
+    discards the run's later history (orbax would otherwise silently skip
+    saving when training reaches a step that still exists)."""
+    later_steps = [s for s in manager.all_steps() if s > step]
+    for s in later_steps:
+        manager.delete(s)
+    if rank == 0:
+        import shutil
+        for s in later_steps:
+            shutil.rmtree(_data_state_dir(run_dir, s), ignore_errors=True)
+    return later_steps
+
+
 # ---------------------------------------------------------------------------
 # Loading a trained model (evaluation / inference), any layout
 # ---------------------------------------------------------------------------
@@ -199,6 +214,10 @@ def load_model(run_dir: str, step: int = -1, dtype=jnp.bfloat16,
     # training packs sequences (no padding, pad_id=-1); inference left-pads
     # prompts, so the padding mask must know the tokenizer's real pad id
     model_dict["pad_id"] = tokenizer.pad_id()
+    if flash_attention and mesh is None:
+        devices = np.reshape(jax.devices(), (-1, jax.local_device_count()))
+        mesh = jax.sharding.Mesh(devices, ("nodes", "gpus"))
+        partition_spec = jax.sharding.PartitionSpec(("nodes", "gpus"), None)
     model_dict["flash_attention"] = (
         build_flash_attention(model_args, mesh, partition_spec)
         if flash_attention else None
