@@ -27,9 +27,10 @@ consumed. ``restore`` replays the pipeline from the anchor — re-rolling the sa
 seed chain, re-tokenizing a handful of documents — and drops what was already
 consumed, rebuilding the buffers bit-identically.
 
-Sources are explicit user paths ({lang: path}); a path may be a JSONL file, a
-.zst-compressed JSONL file, a plain text file (one document per line), or a
-directory of such files. The language mixture is explicit ({lang: weight}).
+Sources are explicit user paths ({lang: path}); a path may be a plain text
+file (``.txt``, one document per line), a JSONL file (any other extension,
+document under ``text_field``), the ``.zst``-compressed version of either, or
+a directory of such files. The language mixture is explicit ({lang: weight}).
 """
 import json
 import math
@@ -55,9 +56,12 @@ LANGUAGE_SAMPLING, SUBTOKENIZER_SAMPLING = 1, 2
 class PretrainDataConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sources: dict[str, str] = {}   # {lang: path} — file (.jsonl/.zst/.txt) or directory
+    sources: dict[str, str] = {}   # {lang: path} — file (plain text or JSONL, optionally .zst) or directory
     weights: dict[str, float] = {}  # {lang: mixture weight} — explicit (normalized here)
-    text_field: str = "text"        # document field in JSONL sources
+    # Format is decided per FILE by extension: .txt (or .txt.zst) = raw text,
+    # one document per line; anything else = JSONL with the document under
+    # text_field. Sources of both formats can therefore be mixed in one run.
+    text_field: str = "text"
     batch_size: int | None = None
     context_size: int | None = None
     seed: int = 0
@@ -65,15 +69,9 @@ class PretrainDataConfig(BaseModel):
     # tokens before emitting (bounds the resume replay window).
     buffer_coef: int = 4
 
-    # deterministic document filters (None = disabled). Metadata filters read
-    # the corresponding JSONL fields when present.
+    # deterministic document length filters (None = disabled)
     min_doc_chars: int | None = None
     max_doc_chars: int | None = None
-    filter_lid: float | None = None                # keep if doc['lid'] >= value
-    threshold_repetitions: float | None = None     # keep if doc['repetitions'] <= value
-    threshold_long_words: float | None = None      # keep if doc['long_words'] <= value
-    quality_weights: str | None = None             # 'wiki:1.0,stem:1.0,...'
-    quality_threshold: float | None = None         # keep if weighted score >= value
 
     @model_validator(mode="after")
     def validate_weights(self):
@@ -96,28 +94,12 @@ class Batch:
 def make_example_filter(cfg: PretrainDataConfig):
     """Deterministic document filter (a pure function of the document — any
     randomness here would break replay-based resume)."""
-    coefs = None
-    if cfg.quality_weights:
-        coefs = {k: float(v) for k, v in (x.split(":") for x in cfg.quality_weights.split(","))}
 
     def _filter(doc: dict, text: str) -> bool:
         if cfg.min_doc_chars is not None and len(text) < cfg.min_doc_chars:
             return False
         if cfg.max_doc_chars is not None and len(text) > cfg.max_doc_chars:
             return False
-        if cfg.filter_lid is not None and "lid" in doc and doc["lid"] < cfg.filter_lid:
-            return False
-        if cfg.threshold_repetitions is not None and "repetitions" in doc \
-                and doc["repetitions"] > cfg.threshold_repetitions:
-            return False
-        if cfg.threshold_long_words is not None and "long_words" in doc \
-                and doc["long_words"] > cfg.threshold_long_words:
-            return False
-        if coefs is not None and cfg.quality_threshold is not None:
-            if any(k in doc for k in coefs):
-                score = sum(v * doc.get(k, 0.0) for k, v in coefs.items())
-                if score < cfg.quality_threshold:
-                    return False
         return True
 
     return _filter
@@ -148,7 +130,9 @@ class DocReader:
         self._it = None
 
     def _parse(self, path: str, line: str):
-        if path.endswith(".txt"):
+        # .txt (or .txt.zst) = raw text, one document per line (blank lines
+        # skipped); any other file is JSONL with the document under text_field
+        if path.removesuffix(".zst").endswith(".txt"):
             text = line.rstrip("\n")
             return ({}, text) if text.strip() else None
         doc = json.loads(line)

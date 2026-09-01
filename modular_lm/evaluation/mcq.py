@@ -8,9 +8,11 @@ Two scoring modes:
   - letter: the model picks the answer letter (A/B/C/...) by next-token logits.
 
 ``data_path`` points at ONE task's own directory: ``train.jsonl`` +
-``<split>.jsonl`` in the dataset's original format (for mmlu: the standard
-``dev/ val/ test/`` CSV tree). ``task`` only selects the prompt format and the
-file loader, never a path.
+``<split>.jsonl`` in the schema of the task's loader — see the loader
+docstrings below; some datasets are distributed in that schema, others must
+first be converted to it (for mmlu: the standard ``dev/ val/ test/`` CSV
+tree). ``task`` only selects the prompt format and the file loader, never a
+path.
 
 Run as ``python -m modular_lm.evaluation.mcq run_dir=... task=arc data_path=...
 subtokenizer_id=en``.
@@ -34,11 +36,17 @@ from modular_tokenizers.config import as_str_list, parse_args_to_pydantic_model
 
 
 # ---------------------------------------------------------------------------
-# Dataset loaders — one per distribution format, yielding
-# {question, choices, gold} (+ optional context)
+# Dataset loaders — one per FILE SCHEMA, yielding {question, choices, gold}
+# (+ optional context). Each task in TASK_FORMATS names its loader: datasets
+# whose distributed format matches the loader's schema are used directly
+# (arc, csqa, hellaswag, mmlu); the others must first be CONVERTED to their
+# loader's schema (belebele/exams -> load_allenai; piqa/siqa/global_piqa ->
+# load_hellaswag; sciq/boolq -> load_std).
 # ---------------------------------------------------------------------------
 
 def load_std(filename):
+    """One JSON object per line: {"question": str, "choices": [str],
+    "answer": <index of the correct choice>} (+ optional "context")."""
     with open(filename) as fin:
         for line in fin:
             data = json.loads(line)
@@ -47,6 +55,9 @@ def load_std(filename):
 
 
 def load_allenai(filename):
+    """The AllenAI ARC/CSQA distribution format, one JSON object per line:
+    {"question": {"stem": str, "choices": [{"label": str, "text": str}]},
+    "answerKey": <label of the correct choice>}."""
     with open(filename) as fin:
         for line in fin:
             data = json.loads(line)
@@ -60,6 +71,9 @@ def load_allenai(filename):
 
 
 def load_hellaswag(filename):
+    """The HellaSwag distribution format, one JSON object per line:
+    {"ctx": str, "endings": [str], "label": <index of the correct ending>}
+    (+ optional "activity_label", prepended to the context)."""
     with open(filename) as fin:
         for line in fin:
             data = json.loads(line)
@@ -71,6 +85,8 @@ def load_hellaswag(filename):
 
 
 def load_winogrande(filename):
+    """One JSON object per line: {"ctx": [<the two full contexts>],
+    "end": <shared continuation>, "label": <index of the correct context>}."""
     with open(filename) as fin:
         for line in fin:
             data = json.loads(line)
@@ -79,6 +95,8 @@ def load_winogrande(filename):
 
 
 def load_mmlu(path, split, topic):
+    """The standard MMLU distribution: a ``dev/ val/ test/`` tree of
+    ``<topic>_<split>.csv`` files with rows [question, A, B, C, D, answer]."""
     split = {"train": "dev", "valid": "val", "test": "test"}[split]
     filename = os.path.join(path, split, f"{topic}_{split}.csv")
     letter_to_idx = {"A": 0, "B": 1, "C": 2, "D": 3}

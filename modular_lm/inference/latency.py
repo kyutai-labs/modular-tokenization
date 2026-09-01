@@ -54,9 +54,11 @@ class LatencyArgs(BaseModel):
 
 
 def iter_docs(path: str, text_field: str):
+    # same convention as the pretraining loader: .txt (or .txt.zst) = raw text,
+    # one document per line; any other file = JSONL with the document under text_field
     for file in source_files(path):
         for line in iter_file_lines(file):
-            if file.endswith(".txt"):
+            if file.removesuffix(".zst").endswith(".txt"):
                 if line.strip():
                     yield line.rstrip("\n")
             else:

@@ -175,8 +175,9 @@ sbatch scripts/lm/latency.sh              # forward latency: compact sub-vocabul
 ```
 
 Each evaluation takes an explicit `data_path` pointing at one task's own directory
-(`train.jsonl` + `test.jsonl` in the dataset's original format — the expected fields are
-documented in each module's docstring), and a `subtokenizer_ids` list to evaluate under.
+(`train.jsonl` + `test.jsonl`; the file schema each task expects is documented with its
+loader — some datasets are used in their distributed format, others must first be converted
+to the loader's schema), and a `subtokenizer_ids` list to evaluate under.
 Translation supports a cross-subtokenizer mode (`subtokenizer_id_out`) where the few-shot
 prompt is built in token space, sources and targets encoded by different subtokenizers.
 
